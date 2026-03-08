@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Model Performance Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+<div class="container">
+
+<!-- NAVBAR -->
+<nav class="top-nav">
+    <div class="nav-links">
+        <button onclick="window.location.href='/'">Home</button>
+        <button class="active">Dashboard</button>
+    </div>
+</nav>
+
+<section class="hero">
+    <h1>Model Performance Dashboard</h1>
+    <p>Real-time analytics and dataset overview</p>
+</section>
+
+<!-- TOP CARDS -->
+<div class="stats-grid">
+
+    <div class="stat-card">
+        <h3>MODEL Accuracy</h3>
+        <div class="value">
+            {{ "%.2f"|format(metrics.get('accuracy',0)*100) }}%
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <h3>F1 Score</h3>
+        <div class="value">
+            {{ "%.2f"|format(metrics.get('f1_score',0)*100) }}%
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <h3>Trained Data</h3>
+        <div class="value">
+            {{ metrics.get('dataset_size',0) }}
+        </div>
+        <small>Image Dataset and Patient Records</small>
+    </div>
+
+</div>
+
+<!-- CHARTS -->
+<div class="charts-grid">
+
+    <div class="card">
+        <h2>Model Accuracy Curve</h2>
+        <canvas id="accuracyChart"></canvas>
+    </div>
+
+    <div class="card">
+        <h2>F1 Score Curve</h2>
+        <canvas id="f1Chart"></canvas>
+    </div>
+
+</div>
+
+<script id="metrics-data" type="application/json">
+    {{ metrics.get('history', {}) | tojson }}
+</script>
+
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
+</div>
+</body>
+</html>
