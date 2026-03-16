@@ -1,5 +1,6 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Disable GPU for server
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import numpy as np
 import pickle
@@ -12,11 +13,14 @@ from tensorflow.keras.preprocessing import image
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 
+# ================= BASE PATH =================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ================= FLASK APP =================
 app = Flask(__name__)
 
 # ================= CONFIG =================
-UPLOAD_FOLDER = "static/uploads"
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "static/uploads")
 
 ALLOWED_EXTENSIONS = {
     'png','jpg','jpeg','webp','bmp','jfif','tif','tiff','gif'
@@ -27,9 +31,9 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 IMG_SIZE = (160,160)
 
-MODEL_PATH = "models/saved/combined_model_fast.h5"
-SCALER_PATH = "models/saved/scaler.pkl"
-CLASS_NAMES_PATH = "models/saved/class_names.pkl"
+MODEL_PATH = os.path.join(BASE_DIR,"models/saved/combined_model_fast.h5")
+SCALER_PATH = os.path.join(BASE_DIR,"models/saved/scaler.pkl")
+CLASS_NAMES_PATH = os.path.join(BASE_DIR,"models/saved/class_names.pkl")
 
 MODEL = None
 SCALER = None
@@ -43,8 +47,10 @@ def load_resources():
 
     try:
 
+        print("Loading resources...")
+
         if MODEL is None:
-            MODEL = load_model(MODEL_PATH, compile=False)
+            MODEL = load_model(MODEL_PATH, compile=False, safe_mode=False)
             print("✅ Model Loaded")
 
         if SCALER is None:
@@ -122,16 +128,13 @@ def dashboard():
         "dataset_size": 7000,
 
         "history": {
-            "accuracy": [
-                0.72, 0.80, 0.85, 0.90,0.91,0.92, 0.93, 0.95, 0.96, 0.9761
-            ],
-            "f1_score": [
-                0.70, 0.78, 0.84, 0.89,0.90,0.91 ,0.92, 0.95, 0.96, 0.978
-            ]
+            "accuracy":[0.72,0.80,0.85,0.90,0.91,0.92,0.93,0.95,0.96,0.9761],
+            "f1_score":[0.70,0.78,0.84,0.89,0.90,0.91,0.92,0.95,0.96,0.978]
         }
     }
 
     return render_template("dashboard.html", metrics=metrics)
+
 
 # ================= PREDICTION =================
 @app.route("/predict_combined",methods=["POST"])
@@ -212,6 +215,6 @@ if __name__ == "__main__":
 
     load_resources()
 
-    port = int(os.environ.get("PORT",10000))
+    port = int(os.environ.get("PORT",8080))
 
     app.run(host="0.0.0.0",port=port)
