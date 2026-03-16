@@ -12,10 +12,11 @@ from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
+from collections import Counter
 
 # ================= PERFORMANCE SETTINGS =================
 tf.keras.backend.clear_session()
-tf.config.optimizer.set_jit(True)  # XLA acceleration
+tf.config.optimizer.set_jit(True)
 
 # ================= PATHS =================
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,44 +26,62 @@ SAVE_DIR = os.path.join(BASE_DIR, "models", "saved")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-IMG_SIZE = (160, 160)   # 🔥 Smaller = Faster
+IMG_SIZE = (160,160)
 BATCH_SIZE = 16
-EPOCHS = 12              # 🔥 Short training
+EPOCHS = 12
+
+# ================= CLASS ORDER =================
+class_names = ["ALL","AML","CLL","CML","FL","Healthy"]
+class_to_index = {name:i for i,name in enumerate(class_names)}
+NUM_CLASSES = len(class_names)
+
+print("Class Mapping:",class_to_index)
 
 # ================= LOAD CSV =================
 df = pd.read_csv(CSV_PATH)
 
-clinical_cols = ["wbc", "rbc", "platelets", "hb", "blasts", "age"]
+clinical_cols = ["wbc","rbc","platelets","hb","blasts","age"]
 X_clinical = df[clinical_cols].values.astype(np.float32)
 
-unique_labels = sorted(df["label"].unique())
-label_mapping = {label: idx for idx, label in enumerate(unique_labels)}
-y = df["label"].map(label_mapping).values
+df["label"] = df["label"].astype(int)
+
+print("CSV Numeric Labels:",df["label"].unique())
+
+y = df["label"].values
 
 # ================= LOAD IMAGE DATA =================
-class_names = sorted(
-    [d for d in os.listdir(IMAGE_DIR)
-     if os.path.isdir(os.path.join(IMAGE_DIR, d))]
-)
-
-class_to_index = {name: idx for idx, name in enumerate(class_names)}
+valid_ext = (".png",".jpg",".jpeg",".bmp",".webp",".jfif",".tif",".tiff")
 
 image_paths = []
 image_labels = []
 
-valid_ext = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".jfif", ".tif")
-
 for cls in class_names:
-    folder = os.path.join(IMAGE_DIR, cls)
-    for file in os.listdir(folder):
-        if file.lower().endswith(valid_ext):
-            image_paths.append(os.path.join(folder, file))
+
+    folder = os.path.join(IMAGE_DIR,cls)
+
+    if not os.path.exists(folder):
+        print("⚠️ Missing folder:",cls)
+        continue
+
+    files = os.listdir(folder)
+
+    print(f"{cls} images found:",len(files))
+
+    for file in files:
+
+        ext = os.path.splitext(file)[1].lower()
+
+        if ext in valid_ext:
+
+            image_paths.append(os.path.join(folder,file))
             image_labels.append(class_to_index[cls])
 
 image_paths = np.array(image_paths)
 image_labels = np.array(image_labels)
 
-# ================= PAIR (FAST VERSION - NO REPEAT) =================
+print("Total Images:",len(image_paths))
+
+# ================= PAIR IMAGE + CLINICAL =================
 paired_img_paths = []
 paired_clinical = []
 paired_labels = []
@@ -72,111 +91,139 @@ for cls_name, cls_index in class_to_index.items():
     img_idx = np.where(image_labels == cls_index)[0]
     cl_idx = np.where(y == cls_index)[0]
 
-    if len(img_idx) == 0 or len(cl_idx) == 0:
+    if len(img_idx) == 0:
+        print(f"⚠️ No images for class {cls_name}")
         continue
 
-    n = min(len(img_idx), len(cl_idx))
+    if len(cl_idx) == 0:
+        print(f"⚠️ No clinical data for class {cls_name}")
+        continue
 
-    for i, j in zip(img_idx[:n], cl_idx[:n]):
-        paired_img_paths.append(image_paths[i])
-        paired_clinical.append(X_clinical[j])
+    for i, img_i in enumerate(img_idx):
+
+        clinical_i = cl_idx[i % len(cl_idx)]
+
+        paired_img_paths.append(image_paths[img_i])
+        paired_clinical.append(X_clinical[clinical_i])
         paired_labels.append(cls_index)
 
 paired_img_paths = np.array(paired_img_paths)
 paired_clinical = np.array(paired_clinical)
 paired_labels = np.array(paired_labels)
 
-# Reindex labels
-unique_after = sorted(np.unique(paired_labels))
-label_map = {old: new for new, old in enumerate(unique_after)}
-paired_labels = np.array([label_map[l] for l in paired_labels])
-NUM_CLASSES = len(unique_after)
+print("Dataset Size:",len(paired_labels))
+print("Label Distribution:",Counter(paired_labels))
 
-print("Training Classes:", unique_after)
-print("Dataset Size:", len(paired_labels))
-
-# ================= SPLIT =================
-X_img_train, X_img_test, X_cl_train, X_cl_test, y_train, y_test = train_test_split(
-    paired_img_paths,
-    paired_clinical,
-    paired_labels,
-    test_size=0.2,
-    random_state=42,
-    stratify=paired_labels
+# ================= TRAIN TEST SPLIT =================
+X_img_train,X_img_test,X_cl_train,X_cl_test,y_train,y_test = train_test_split(
+paired_img_paths,
+paired_clinical,
+paired_labels,
+test_size=0.2,
+random_state=42,
+stratify=paired_labels
 )
 
 # ================= SCALE CLINICAL =================
 scaler = StandardScaler()
+
 X_cl_train = scaler.fit_transform(X_cl_train)
 X_cl_test = scaler.transform(X_cl_test)
 
-with open(os.path.join(SAVE_DIR, "scaler.pkl"), "wb") as f:
-    pickle.dump(scaler, f)
+with open(os.path.join(SAVE_DIR,"scaler.pkl"),"wb") as f:
+    pickle.dump(scaler,f)
 
 # ================= IMAGE LOADER =================
-def load_sample(img_path, clinical_features, label):
-    img_path = img_path.numpy().decode("utf-8")
-    img = cv2.imread(img_path)
-    img = cv2.resize(img, IMG_SIZE)
-    img = preprocess_input(img.astype(np.float32))
-    return img, clinical_features, label
+def load_sample(img_path,clinical_features,label):
 
-def tf_wrapper(img_path, clinical_features, label):
-    img, clinical_features, label = tf.py_function(
+    img_path = img_path.numpy().decode("utf-8")
+
+    img = cv2.imread(img_path)
+    img = cv2.resize(img,IMG_SIZE)
+    img = preprocess_input(img.astype(np.float32))
+
+    return img,clinical_features,label
+
+
+def tf_wrapper(img_path,clinical_features,label):
+
+    img,clinical_features,label = tf.py_function(
         load_sample,
-        [img_path, clinical_features, label],
-        [tf.float32, tf.float32, tf.int32],
+        [img_path,clinical_features,label],
+        [tf.float32,tf.float32,tf.int32]
     )
-    img.set_shape((IMG_SIZE[0], IMG_SIZE[1], 3))
+
+    img.set_shape((IMG_SIZE[0],IMG_SIZE[1],3))
     clinical_features.set_shape((6,))
     label.set_shape(())
-    return (img, clinical_features), label
 
-train_ds = tf.data.Dataset.from_tensor_slices((X_img_train, X_cl_train, y_train))
+    return (img,clinical_features),label
+
+
+train_ds = tf.data.Dataset.from_tensor_slices((X_img_train,X_cl_train,y_train))
 train_ds = train_ds.map(tf_wrapper).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
-test_ds = tf.data.Dataset.from_tensor_slices((X_img_test, X_cl_test, y_test))
+test_ds = tf.data.Dataset.from_tensor_slices((X_img_test,X_cl_test,y_test))
 test_ds = test_ds.map(tf_wrapper).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
-# ================= MODEL =================
-image_input = layers.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3))
-
-base_model = MobileNetV2(
-    input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3),
-    include_top=False,
-    weights="imagenet"
+# ================= CLASS WEIGHTS =================
+class_weights = compute_class_weight(
+    class_weight="balanced",
+    classes=np.unique(paired_labels),
+    y=paired_labels
 )
 
-base_model.trainable = False  # 🔥 No fine-tuning for speed
+class_weights = dict(enumerate(class_weights))
 
-x = base_model(image_input, training=False)
+print("Class Weights:",class_weights)
+
+# ================= MODEL =================
+image_input = layers.Input(shape=(IMG_SIZE[0],IMG_SIZE[1],3))
+
+base_model = MobileNetV2(
+input_shape=(IMG_SIZE[0],IMG_SIZE[1],3),
+include_top=False,
+weights="imagenet"
+)
+
+base_model.trainable=False
+
+x = base_model(image_input,training=False)
 x = layers.GlobalAveragePooling2D()(x)
-x = layers.Dense(128, activation="relu")(x)
+x = layers.Dense(128,activation="relu")(x)
 x = layers.Dropout(0.4)(x)
 
 clinical_input = layers.Input(shape=(6,))
-c = layers.Dense(64, activation="relu")(clinical_input)
+c = layers.Dense(64,activation="relu")(clinical_input)
 
-combined = layers.concatenate([x, c])
-combined = layers.Dense(128, activation="relu")(combined)
-output = layers.Dense(NUM_CLASSES, activation="softmax")(combined)
+combined = layers.concatenate([x,c])
+combined = layers.Dense(128,activation="relu")(combined)
 
-model = models.Model(inputs=[image_input, clinical_input], outputs=output)
+output = layers.Dense(NUM_CLASSES,activation="softmax")(combined)
+
+model = models.Model(inputs=[image_input,clinical_input],outputs=output)
 
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-    loss="sparse_categorical_crossentropy",
-    metrics=["accuracy"]
+optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+loss="sparse_categorical_crossentropy",
+metrics=["accuracy"]
 )
+
+model.summary()
 
 # ================= TRAIN =================
 model.fit(
-    train_ds,
-    validation_data=test_ds,
-    epochs=EPOCHS,
-    callbacks=[EarlyStopping(patience=3, restore_best_weights=True)]
+train_ds,
+validation_data=test_ds,
+epochs=EPOCHS,
+class_weight=class_weights,
+callbacks=[EarlyStopping(patience=3,restore_best_weights=True)]
 )
 
-model.save(os.path.join(SAVE_DIR, "combined_model_fast.h5"))
+# ================= SAVE MODEL =================
+model.save(os.path.join(SAVE_DIR,"combined_model_fast.h5"))
 
-print("🔥 FAST TRAINING COMPLETED (Under 20 Minutes)")
+with open(os.path.join(SAVE_DIR,"class_names.pkl"),"wb") as f:
+    pickle.dump(class_names,f)
+
+print("FAST TRAINING COMPLETED")

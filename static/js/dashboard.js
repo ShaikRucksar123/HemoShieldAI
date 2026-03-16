@@ -10,23 +10,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const epochs = accData.map((_, i) => i + 1);
 
     const commonOptions = {
-        responsive: true,
-        plugins: {
-            legend: {
-                labels: { color: '#ffffff' }
-            }
-        },
-        scales: {
-            x: {
-                ticks: { color: '#ffffff' }
-            },
-            y: {
-                min: 0.6,
-                max: 1,
-                ticks: { color: '#ffffff' }
-            }
+    responsive: true,
+
+    animation: {
+        duration: 2000,
+        easing: 'easeOutQuart'
+    },
+
+    plugins: {
+        legend: {
+            labels: { color: '#ffffff' }
         }
-    };
+    },
+
+    scales: {
+        x: {
+            ticks: { color: '#ffffff' }
+        },
+        y: {
+            min: 0.6,
+            max: 1,
+            ticks: { color: '#ffffff' }
+        }
+    }
+};
 
     // Accuracy Graph
     new Chart(document.getElementById('accuracyChart'), {
