@@ -12,6 +12,13 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.layers import DepthwiseConv2D
 
 
+# ===== FIX FOR H5 MODEL (REMOVE groups ARGUMENT) =====
+class FixedDepthwiseConv2D(DepthwiseConv2D):
+    def __init__(self, *args, **kwargs):
+        kwargs.pop("groups", None)
+        super().__init__(*args, **kwargs)
+
+
 # ================= PATHS =================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -54,7 +61,7 @@ def load_resources():
                 MODEL_PATH,
                 compile=False,
                 custom_objects={
-                    "DepthwiseConv2D": DepthwiseConv2D
+                    "DepthwiseConv2D": FixedDepthwiseConv2D
                 }
             )
 
@@ -155,7 +162,6 @@ def predict_combined():
     load_resources()
 
     if MODEL is None or SCALER is None or not CLASS_NAMES:
-
         return jsonify({"status":"error","message":"Model not loaded properly"})
 
     try:
@@ -178,6 +184,7 @@ def predict_combined():
             return jsonify({"status":"error","message":"Invalid image file"})
 
         filename=secure_filename(file.filename)
+
         filepath=os.path.join(app.config["UPLOAD_FOLDER"],filename)
 
         file.save(filepath)
@@ -189,6 +196,7 @@ def predict_combined():
         img=np.expand_dims(img,axis=0)
 
         clinical=np.array([[wbc,rbc,platelets,hb,blasts,age]],dtype=np.float32)
+
         clinical=SCALER.transform(clinical)
 
         preds=MODEL.predict([img,clinical],verbose=0)[0]
@@ -217,7 +225,7 @@ def predict_combined():
         })
 
 
-# ================= START =================
+# ================= START APP =================
 if __name__=="__main__":
 
     load_resources()
