@@ -1,7 +1,7 @@
-opencv-python-headless
 flask
 gunicorn
 tensorflow==2.13.0
 numpy==1.24.3
 pillow
 scikit-learn
+opencv-python-headless
