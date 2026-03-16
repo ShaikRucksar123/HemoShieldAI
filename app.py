@@ -1,5 +1,6 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import numpy as np
 import pickle
@@ -12,7 +13,7 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.layers import DepthwiseConv2D
 
 
-# ===== FIX FOR H5 MODEL (REMOVE groups ARGUMENT) =====
+# ===== FIX FOR H5 MODEL =====
 class FixedDepthwiseConv2D(DepthwiseConv2D):
     def __init__(self, *args, **kwargs):
         kwargs.pop("groups", None)
@@ -26,14 +27,8 @@ MODEL_PATH = os.path.join(BASE_DIR, "models", "saved", "combined_model_fast.h5")
 SCALER_PATH = os.path.join(BASE_DIR, "models", "saved", "scaler.pkl")
 CLASS_NAMES_PATH = os.path.join(BASE_DIR, "models", "saved", "class_names.pkl")
 
-
-# ================= FLASK APP =================
-app = Flask(__name__)
-
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 IMG_SIZE = (160,160)
 
@@ -41,54 +36,36 @@ ALLOWED_EXTENSIONS = {
     'png','jpg','jpeg','webp','bmp','jfif','tif','tiff','gif'
 }
 
-MODEL = None
-SCALER = None
-CLASS_NAMES = []
+
+# ================= FLASK APP =================
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 
-# ================= LOAD MODEL =================
-def load_resources():
+# ================= LOAD MODEL AT START =================
+print("🚀 Loading AI model...")
 
-    global MODEL, SCALER, CLASS_NAMES
+MODEL = tf.keras.models.load_model(
+    MODEL_PATH,
+    compile=False,
+    custom_objects={"DepthwiseConv2D": FixedDepthwiseConv2D}
+)
 
-    try:
+print("✅ Model Loaded")
 
-        if MODEL is None:
+with open(SCALER_PATH,"rb") as f:
+    SCALER = pickle.load(f)
 
-            print("Loading model from:", MODEL_PATH)
+print("✅ Scaler Loaded")
 
-            MODEL = tf.keras.models.load_model(
-                MODEL_PATH,
-                compile=False,
-                custom_objects={
-                    "DepthwiseConv2D": FixedDepthwiseConv2D
-                }
-            )
+with open(CLASS_NAMES_PATH,"rb") as f:
+    CLASS_NAMES = pickle.load(f)
 
-            print("✅ Model Loaded")
-
-        if SCALER is None:
-
-            with open(SCALER_PATH,"rb") as f:
-                SCALER = pickle.load(f)
-
-            print("✅ Scaler Loaded")
-
-        if not CLASS_NAMES:
-
-            with open(CLASS_NAMES_PATH,"rb") as f:
-                CLASS_NAMES = pickle.load(f)
-
-            print("✅ Class Names Loaded:", CLASS_NAMES)
-
-    except Exception as e:
-
-        print("❌ Resource loading error:", e)
+print("✅ Class Names Loaded:", CLASS_NAMES)
 
 
 # ================= UTILS =================
 def allowed_file(filename):
-
     return "." in filename and filename.rsplit(".",1)[1].lower() in ALLOWED_EXTENSIONS
 
 
@@ -143,10 +120,10 @@ def index():
 def dashboard():
 
     metrics = {
-        "accuracy": 0.9761,
-        "f1_score": 0.978,
-        "dataset_size": 7000,
-        "history": {
+        "accuracy":0.9761,
+        "f1_score":0.978,
+        "dataset_size":7000,
+        "history":{
             "accuracy":[0.72,0.80,0.85,0.90,0.91,0.92,0.93,0.95,0.96,0.9761],
             "f1_score":[0.70,0.78,0.84,0.89,0.90,0.91,0.92,0.95,0.96,0.978]
         }
@@ -158,11 +135,6 @@ def dashboard():
 # ================= PREDICTION =================
 @app.route("/predict_combined",methods=["POST"])
 def predict_combined():
-
-    load_resources()
-
-    if MODEL is None or SCALER is None or not CLASS_NAMES:
-        return jsonify({"status":"error","message":"Model not loaded properly"})
 
     try:
 
@@ -184,7 +156,6 @@ def predict_combined():
             return jsonify({"status":"error","message":"Invalid image file"})
 
         filename=secure_filename(file.filename)
-
         filepath=os.path.join(app.config["UPLOAD_FOLDER"],filename)
 
         file.save(filepath)
@@ -196,7 +167,6 @@ def predict_combined():
         img=np.expand_dims(img,axis=0)
 
         clinical=np.array([[wbc,rbc,platelets,hb,blasts,age]],dtype=np.float32)
-
         clinical=SCALER.transform(clinical)
 
         preds=MODEL.predict([img,clinical],verbose=0)[0]
@@ -209,10 +179,12 @@ def predict_combined():
         print("Prediction:",label,"Confidence:",confidence)
 
         return jsonify({
+
             "status":"success",
             "prediction":label,
             "confidence":round(confidence,2),
             "suggestion":get_disease_specific_suggestion(label)
+
         })
 
     except Exception as e:
@@ -227,8 +199,6 @@ def predict_combined():
 
 # ================= START APP =================
 if __name__=="__main__":
-
-    load_resources()
 
     port=int(os.environ.get("PORT",10000))
 
