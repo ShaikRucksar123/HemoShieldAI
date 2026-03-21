@@ -20,7 +20,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__)
 
 # ================= CONFIG =================
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static/uploads")
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 
 ALLOWED_EXTENSIONS = {
     'png','jpg','jpeg','webp','bmp','jfif','tif','tiff','gif'
@@ -31,9 +31,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 IMG_SIZE = (160,160)
 
-MODEL_PATH = os.path.join(BASE_DIR,"models/saved/combined_model_fast.h5")
-SCALER_PATH = os.path.join(BASE_DIR,"models/saved/scaler.pkl")
-CLASS_NAMES_PATH = os.path.join(BASE_DIR,"models/saved/class_names.pkl")
+# ✅ FIXED PATHS
+MODEL_PATH = os.path.join(BASE_DIR, "models", "saved", "combined_model_fast.h5")
+SCALER_PATH = os.path.join(BASE_DIR, "models", "saved", "scaler.pkl")
+CLASS_NAMES_PATH = os.path.join(BASE_DIR, "models", "saved", "class_names.pkl")
 
 MODEL = None
 SCALER = None
@@ -46,25 +47,39 @@ def load_resources():
     global MODEL, SCALER, CLASS_NAMES
 
     try:
+        print("🔄 Loading resources...")
+        print("MODEL PATH:", MODEL_PATH)
 
-        print("Loading resources...")
-
+        # ✅ MODEL
         if MODEL is None:
-            MODEL = load_model(MODEL_PATH, compile=False, safe_mode=False)
-            print("✅ Model Loaded")
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
+            MODEL = load_model(MODEL_PATH, compile=False)
+            print("✅ Model Loaded Successfully")
+
+        # ✅ SCALER
         if SCALER is None:
-            with open(SCALER_PATH,"rb") as f:
+            if not os.path.exists(SCALER_PATH):
+                raise FileNotFoundError(f"Scaler not found: {SCALER_PATH}")
+
+            with open(SCALER_PATH, "rb") as f:
                 SCALER = pickle.load(f)
+
             print("✅ Scaler Loaded")
 
+        # ✅ CLASS NAMES
         if not CLASS_NAMES:
-            with open(CLASS_NAMES_PATH,"rb") as f:
+            if not os.path.exists(CLASS_NAMES_PATH):
+                raise FileNotFoundError(f"Class names not found: {CLASS_NAMES_PATH}")
+
+            with open(CLASS_NAMES_PATH, "rb") as f:
                 CLASS_NAMES = pickle.load(f)
+
             print("✅ Class Names Loaded:", CLASS_NAMES)
 
     except Exception as e:
-        print("❌ Resource loading error:", e)
+        print("❌ RESOURCE LOADING ERROR:", str(e))
 
 
 # ================= UTILS =================
@@ -101,7 +116,6 @@ def validate_clinical_inputs(wbc,rbc,platelets,hb,blasts,age):
 def get_disease_specific_suggestion(label):
 
     suggestions = {
-
         "ALL":"Acute Lymphoblastic Leukemia detected. Immediate consultation required.",
         "AML":"Acute Myeloid Leukemia detected. Urgent specialist consultation required.",
         "CLL":"Chronic Lymphocytic Leukemia detected. Monitoring recommended.",
@@ -126,7 +140,6 @@ def dashboard():
         "accuracy": 0.9761,
         "f1_score": 0.978,
         "dataset_size": 7000,
-
         "history": {
             "accuracy":[0.72,0.80,0.85,0.90,0.91,0.92,0.93,0.95,0.96,0.9761],
             "f1_score":[0.70,0.78,0.84,0.89,0.90,0.91,0.92,0.95,0.96,0.978]
@@ -142,8 +155,12 @@ def predict_combined():
 
     load_resources()
 
+    # ✅ STRICT CHECK
     if MODEL is None or SCALER is None or not CLASS_NAMES:
-        return jsonify({"status":"error","message":"Model not loaded properly"})
+        return jsonify({
+            "status":"error",
+            "message":"Model not loaded properly (check Render logs)"
+        })
 
     try:
 
@@ -160,7 +177,7 @@ def predict_combined():
         if not valid:
             return jsonify({"status":"error","message":msg})
 
-        # ===== image input =====
+        # ===== image =====
         file=request.files.get("file")
 
         if not file or not allowed_file(file.filename):
@@ -168,16 +185,14 @@ def predict_combined():
 
         filename=secure_filename(file.filename)
         filepath=os.path.join(app.config["UPLOAD_FOLDER"],filename)
-
         file.save(filepath)
 
         img=image.load_img(filepath,target_size=IMG_SIZE)
         img=image.img_to_array(img)
-
         img=preprocess_input(img)
         img=np.expand_dims(img,axis=0)
 
-        # ===== clinical features =====
+        # ===== clinical =====
         clinical=np.array([[wbc,rbc,platelets,hb,blasts,age]],dtype=np.float32)
         clinical=SCALER.transform(clinical)
 
@@ -186,35 +201,26 @@ def predict_combined():
 
         index=int(np.argmax(preds))
         confidence=float(np.max(preds)*100)
-
         label=CLASS_NAMES[index]
 
         print("Prediction:",label,"Confidence:",confidence)
 
         return jsonify({
-
             "status":"success",
             "prediction":label,
             "confidence":round(confidence,2),
             "suggestion":get_disease_specific_suggestion(label)
-
         })
 
     except Exception as e:
-
-        print("❌ Prediction Error:", e)
-
-        return jsonify({
-            "status":"error",
-            "message":str(e)
-        })
+        print("❌ Prediction Error:", str(e))
+        return jsonify({"status":"error","message":str(e)})
 
 
-# ================= START APP =================
+# ================= START =================
 if __name__ == "__main__":
 
     load_resources()
 
-    port = int(os.environ.get("PORT",8080))
-
-    app.run(host="0.0.0.0",port=port)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
