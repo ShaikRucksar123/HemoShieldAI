@@ -1,7 +1,7 @@
-flask
-gunicorn
-tensorflow==2.21.0
-numpy
-pillow
-scikit-learn
-opencv-python-headless
+flask==3.0.3
+gunicorn==21.2.0
+tensorflow-cpu==2.15.0
+numpy==1.24.3
+pillow==10.3.0
+scikit-learn==1.3.2
+opencv-python-headless==4.9.0.80
